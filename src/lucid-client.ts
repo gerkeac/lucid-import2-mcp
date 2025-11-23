@@ -136,7 +136,7 @@ export class LucidApiClient {
    * Get user profile information
    */
   async getUserProfile(): Promise<{ id: string; name: string; email: string }> {
-    const response = await fetch(`${LUCID_API_BASE}/users/me`, {
+    const response = await fetch(`${LUCID_API_BASE}/users/me/profile`, {
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
         'Lucid-Api-Version': '1',

@@ -431,52 +431,56 @@ app.post('/oauth/token',
     }
   });
 
-// Set up SSE transport - store per-client connections
-const transports = new Map<string, SSEServerTransport>();
-
-// Helper to get or create a transport for a client
-function getOrCreateTransport(sessionId: string, res?: any): SSEServerTransport | undefined {
-  if (res && !transports.has(sessionId)) {
-    console.log(`[SSE] Creating new transport for session: ${sessionId}`);
-    const transport = new SSEServerTransport('/sse', res);
-    transports.set(sessionId, transport);
-    server.connect(transport).then(() => {
-      console.log(`[SSE] Transport connected for session: ${sessionId}`);
-    });
-    return transport;
-  }
-  return transports.get(sessionId);
-}
+// Set up SSE transport - single global transport
+// LibreChat doesn't use session-based SSE, it uses a single connection
+let transport: SSEServerTransport | null = null;
+let pendingResponses: any[] = [];
 
 app.get('/sse', async (req, res) => {
   console.log('[SSE] GET /sse - Establishing SSE connection');
-  const sessionId = req.headers['authorization'] || 'default';
-  console.log('[SSE] Session ID:', sessionId);
-  getOrCreateTransport(sessionId, res);
+
+  // Create transport with this response stream
+  transport = new SSEServerTransport('/sse', res);
+  await server.connect(transport);
+  console.log('[SSE] Transport established and connected');
+
+  // Process any pending POST requests that arrived before GET
+  if (pendingResponses.length > 0) {
+    console.log(`[SSE] Processing ${pendingResponses.length} pending requests`);
+    for (const pending of pendingResponses) {
+      try {
+        await transport.handlePostMessage(pending.req, pending.res);
+      } catch (error) {
+        console.error('[SSE] Error processing pending request:', error);
+      }
+    }
+    pendingResponses = [];
+  }
 });
 
 app.post('/sse', async (req, res) => {
   console.log('[SSE] POST /sse received');
 
-  // Extract session from Authorization header
-  const authHeader = req.headers['authorization'];
-  const sessionId = authHeader || 'default';
-
-  let transport = transports.get(sessionId);
-
-  // If no transport exists for this session, create one dynamically
+  // If transport doesn't exist yet, queue the request
   if (!transport) {
-    console.log('[SSE] No existing transport, creating one on-demand for session:', sessionId);
-    transport = getOrCreateTransport(sessionId, res);
+    console.log('[SSE] No transport yet, queueing request');
+    pendingResponses.push({ req, res });
 
-    if (!transport) {
-      console.error('[SSE] Failed to create transport');
-      res.status(500).json({ error: 'Failed to establish SSE connection' });
-      return;
-    }
+    // Set a timeout to prevent requests from hanging indefinitely
+    setTimeout(() => {
+      const index = pendingResponses.findIndex(p => p.res === res);
+      if (index !== -1) {
+        pendingResponses.splice(index, 1);
+        if (!res.headersSent) {
+          res.status(503).json({ error: 'SSE connection not established yet' });
+        }
+      }
+    }, 5000);
+    return;
   }
 
   // Extract Bearer token for authentication
+  const authHeader = req.headers['authorization'];
   let token: string | undefined;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
@@ -489,7 +493,7 @@ app.post('/sse', async (req, res) => {
   try {
     await authStorage.run(token || '', async () => {
       console.log('[SSE] Processing MCP message...');
-      await transport.handlePostMessage(req, res);
+      await transport!.handlePostMessage(req, res);
       console.log('[SSE] MCP message processed successfully');
     });
   } catch (error) {
