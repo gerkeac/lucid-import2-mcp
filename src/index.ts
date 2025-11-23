@@ -363,11 +363,11 @@ let transport: SSEServerTransport;
 
 app.get('/sse', async (req, res) => {
   console.log('New SSE connection established');
-  transport = new SSEServerTransport('/messages', res);
+  transport = new SSEServerTransport('/sse', res);
   await server.connect(transport);
 });
 
-app.post('/messages', async (req, res) => {
+app.post('/sse', async (req, res) => {
   if (!transport) {
     res.status(400).send('No active SSE connection');
     return;

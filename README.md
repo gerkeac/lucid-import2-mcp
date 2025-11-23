@@ -58,7 +58,7 @@ mcpServers:
       client_id: "${LUCID_CLIENT_ID}"
       client_secret: "${LUCID_CLIENT_SECRET}"
       authorization_url: "https://lucid.app/oauth2/authorize"
-      token_url: "https://lucid.app/oauth2/token"
+      token_url: "https://api.lucid.co/oauth2/token"
       scope: "lucidchart.document.app lucidchart.document.content lucidspark.document.app lucidspark.document.content user.profile"
       redirect_uri: "https://your-client-url.com/api/mcp/lucid-chart/oauth/callback"
 ```
