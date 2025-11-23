@@ -354,6 +354,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Initialize Express app
 const app = express();
+app.disable('x-powered-by');
 app.use(cors());
 
 // Set up SSE transport
