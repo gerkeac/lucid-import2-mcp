@@ -159,12 +159,14 @@ const server = new Server(
 );
 
 // Handle list tools request
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools,
-}));
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  console.log('[MCP] ListTools request received');
+  return { tools };
+});
 
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  console.log('[MCP] CallTool request received:', request.params.name);
   const { name, arguments: args } = request.params;
 
   try {
@@ -429,51 +431,72 @@ app.post('/oauth/token',
     }
   });
 
-// Set up SSE transport
-let transport: SSEServerTransport;
+// Set up SSE transport - store per-client connections
+const transports = new Map<string, SSEServerTransport>();
+
+// Helper to get or create a transport for a client
+function getOrCreateTransport(sessionId: string, res?: any): SSEServerTransport | undefined {
+  if (res && !transports.has(sessionId)) {
+    console.log(`[SSE] Creating new transport for session: ${sessionId}`);
+    const transport = new SSEServerTransport('/sse', res);
+    transports.set(sessionId, transport);
+    server.connect(transport).then(() => {
+      console.log(`[SSE] Transport connected for session: ${sessionId}`);
+    });
+    return transport;
+  }
+  return transports.get(sessionId);
+}
 
 app.get('/sse', async (req, res) => {
-  console.log('[SSE] New SSE connection established (GET /sse)');
-  console.log('[SSE] Query params:', req.query);
-  transport = new SSEServerTransport('/sse', res);
-  await server.connect(transport);
-  console.log('[SSE] Server connected to transport');
+  console.log('[SSE] GET /sse - Establishing SSE connection');
+  const sessionId = req.headers['authorization'] || 'default';
+  console.log('[SSE] Session ID:', sessionId);
+  getOrCreateTransport(sessionId, res);
 });
 
 app.post('/sse', async (req, res) => {
   console.log('[SSE] POST /sse received');
-  console.log('[SSE] Transport exists:', !!transport);
-  console.log('[SSE] Request body available:', !!req.body);
-  console.log('[SSE] Request body:', req.body);
 
+  // Extract session from Authorization header
+  const authHeader = req.headers['authorization'];
+  const sessionId = authHeader || 'default';
+
+  let transport = transports.get(sessionId);
+
+  // If no transport exists for this session, create one dynamically
   if (!transport) {
-    console.error('[SSE] No active transport - rejecting request');
-    res.status(400).send('No active SSE connection');
-    return;
+    console.log('[SSE] No existing transport, creating one on-demand for session:', sessionId);
+    transport = getOrCreateTransport(sessionId, res);
+
+    if (!transport) {
+      console.error('[SSE] Failed to create transport');
+      res.status(500).json({ error: 'Failed to establish SSE connection' });
+      return;
+    }
   }
 
-  // Extract Authorization header (optional - some MCP requests don't require auth)
-  const authHeader = req.headers['authorization'];
+  // Extract Bearer token for authentication
   let token: string | undefined;
-
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
-    console.log('[SSE] Found Bearer token in Authorization header');
+    console.log('[SSE] Found Bearer token');
   } else {
-    console.log('[SSE] No Bearer token found in request');
+    console.log('[SSE] No Bearer token found');
   }
 
   // Run the request handler within the AsyncLocalStorage context
-  // If no token is present, store undefined (tool handlers will check and error if needed)
   try {
     await authStorage.run(token || '', async () => {
-      console.log('[SSE] Handling POST message...');
+      console.log('[SSE] Processing MCP message...');
       await transport.handlePostMessage(req, res);
-      console.log('[SSE] POST message handled successfully');
+      console.log('[SSE] MCP message processed successfully');
     });
   } catch (error) {
-    console.error('[SSE] Error handling POST message:', error);
-    throw error;
+    console.error('[SSE] Error processing MCP message:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
 });
 
