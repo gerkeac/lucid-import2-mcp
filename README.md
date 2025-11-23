@@ -29,6 +29,19 @@ npm start
 This will start the server on port 3000 (default).
 SSE Endpoint: `http://localhost:3000/sse`
 
+### Running with Docker
+
+You can also run the server using Docker:
+
+```bash
+# Build and run with Docker Compose
+docker-compose up -d
+
+# Or build and run manually
+docker build -t lucid-import-mcp .
+docker run -p 3000:3000 --env-file .env lucid-import-mcp
+```
+
 ## Configuration
 
 ### MCP Client Configuration (e.g., LibreChat)
