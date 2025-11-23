@@ -358,13 +358,20 @@ const app = express();
 app.disable('x-powered-by');
 app.use(cors());
 
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  next();
+});
+
+// Enable JSON and URL-encoded body parsing for OAuth endpoint
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // OAuth Proxy Endpoint
 // Translates LibreChat's client_secret_basic (header) to Lucid's client_secret_post (body)
-// Body parsing is applied ONLY to this endpoint to avoid consuming the SSE stream
-app.post('/oauth/token',
-  express.json(),
-  express.urlencoded({ extended: true }),
-  async (req, res) => {
+app.post('/oauth/token', async (req, res) => {
     try {
       // Extract Authorization header
       const authHeader = req.headers['authorization'];
@@ -426,13 +433,18 @@ app.post('/oauth/token',
 let transport: SSEServerTransport;
 
 app.get('/sse', async (req, res) => {
-  console.log('New SSE connection established');
+  console.log('[SSE] New SSE connection established (GET /sse)');
+  console.log('[SSE] Query params:', req.query);
   transport = new SSEServerTransport('/sse', res);
   await server.connect(transport);
+  console.log('[SSE] Server connected to transport');
 });
 
 app.post('/sse', async (req, res) => {
+  console.log('[SSE] POST /sse received');
+
   if (!transport) {
+    console.error('[SSE] No active transport - rejecting request');
     res.status(400).send('No active SSE connection');
     return;
   }
@@ -443,12 +455,17 @@ app.post('/sse', async (req, res) => {
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
+    console.log('[SSE] Found Bearer token in Authorization header');
+  } else {
+    console.log('[SSE] No Bearer token found in request');
   }
 
   // Run the request handler within the AsyncLocalStorage context
   // If no token is present, store undefined (tool handlers will check and error if needed)
   await authStorage.run(token || '', async () => {
+    console.log('[SSE] Handling POST message...');
     await transport.handlePostMessage(req, res);
+    console.log('[SSE] POST message handled');
   });
 });
 
