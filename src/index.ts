@@ -358,69 +358,69 @@ const app = express();
 app.disable('x-powered-by');
 app.use(cors());
 
-// Enable JSON and URL-encoded body parsing for OAuth endpoint
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 // OAuth Proxy Endpoint
 // Translates LibreChat's client_secret_basic (header) to Lucid's client_secret_post (body)
-app.post('/oauth/token', async (req, res) => {
-  try {
-    // Extract Authorization header
-    const authHeader = req.headers['authorization'];
-
-    if (!authHeader || !authHeader.startsWith('Basic ')) {
-      console.error('[OAuth Proxy] Missing or invalid Authorization header');
-      return res.status(401).json({ error: 'invalid_client', error_description: 'Missing client credentials' });
-    }
-
-    // Decode Base64 credentials
-    const base64Credentials = authHeader.split(' ')[1];
-    const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-    const [clientId, clientSecret] = credentials.split(':');
-
-    if (!clientId || !clientSecret) {
-      console.error('[OAuth Proxy] Invalid credentials format');
-      return res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client credentials' });
-    }
-
-    console.log('[OAuth Proxy] Forwarding token request to Lucid API');
-
-    // Forward to Lucid with credentials in body
-    const lucidResponse = await fetch('https://api.lucid.co/oauth2/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: req.body.grant_type || 'authorization_code',
-        code: req.body.code || '',
-        redirect_uri: req.body.redirect_uri || '',
-        client_id: clientId,
-        client_secret: clientSecret,
-        ...(req.body.refresh_token && { refresh_token: req.body.refresh_token }),
-      }),
-    });
-
-    const responseText = await lucidResponse.text();
-
-    // Forward Lucid's response status and body
-    res.status(lucidResponse.status);
-
-    // Try to parse as JSON, otherwise send as text
+// Body parsing is applied ONLY to this endpoint to avoid consuming the SSE stream
+app.post('/oauth/token',
+  express.json(),
+  express.urlencoded({ extended: true }),
+  async (req, res) => {
     try {
-      const jsonResponse = JSON.parse(responseText);
-      console.log('[OAuth Proxy] Token exchange successful');
-      res.json(jsonResponse);
-    } catch {
-      console.error('[OAuth Proxy] Token exchange failed:', lucidResponse.status);
-      res.send(responseText);
+      // Extract Authorization header
+      const authHeader = req.headers['authorization'];
+
+      if (!authHeader || !authHeader.startsWith('Basic ')) {
+        console.error('[OAuth Proxy] Missing or invalid Authorization header');
+        return res.status(401).json({ error: 'invalid_client', error_description: 'Missing client credentials' });
+      }
+
+      // Decode Base64 credentials
+      const base64Credentials = authHeader.split(' ')[1];
+      const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+      const [clientId, clientSecret] = credentials.split(':');
+
+      if (!clientId || !clientSecret) {
+        console.error('[OAuth Proxy] Invalid credentials format');
+        return res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client credentials' });
+      }
+
+      console.log('[OAuth Proxy] Forwarding token request to Lucid API');
+
+      // Forward to Lucid with credentials in body
+      const lucidResponse = await fetch('https://api.lucid.co/oauth2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: req.body.grant_type || 'authorization_code',
+          code: req.body.code || '',
+          redirect_uri: req.body.redirect_uri || '',
+          client_id: clientId,
+          client_secret: clientSecret,
+          ...(req.body.refresh_token && { refresh_token: req.body.refresh_token }),
+        }),
+      });
+
+      const responseText = await lucidResponse.text();
+
+      // Forward Lucid's response status and body
+      res.status(lucidResponse.status);
+
+      // Try to parse as JSON, otherwise send as text
+      try {
+        const jsonResponse = JSON.parse(responseText);
+        console.log('[OAuth Proxy] Token exchange successful');
+        res.json(jsonResponse);
+      } catch {
+        console.error('[OAuth Proxy] Token exchange failed:', lucidResponse.status);
+        res.send(responseText);
+      }
+    } catch (error) {
+      console.error('[OAuth Proxy] Error during token exchange:', error instanceof Error ? error.message : 'Unknown error');
+      res.status(500).json({ error: 'server_error', error_description: 'Internal server error during token exchange' });
     }
-  } catch (error) {
-    console.error('[OAuth Proxy] Error during token exchange:', error instanceof Error ? error.message : 'Unknown error');
-    res.status(500).json({ error: 'server_error', error_description: 'Internal server error during token exchange' });
-  }
-});
+  });
 
 // Set up SSE transport
 let transport: SSEServerTransport;
