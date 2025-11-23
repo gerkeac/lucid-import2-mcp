@@ -1,0 +1,35 @@
+{
+  "name": "lucid-import-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for creating Lucid chart process maps using the Standard Import API",
+  "type": "module",
+  "bin": {
+    "lucid-import-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "lucidchart",
+    "lucidspark",
+    "process-maps",
+    "oauth2"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-fetch": "^3.3.2",
+    "archiver": "^7.0.1",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/archiver": "^6.0.2",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.3.3"
+  }
+}
