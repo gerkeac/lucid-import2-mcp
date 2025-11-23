@@ -1,15 +1,15 @@
 # Lucid Import MCP Server
 
-An MCP (Model Context Protocol) server that enables creation of Lucid chart process maps using the Lucid REST API with OAuth2 authentication and Standard Import JSON format.
+An MCP (Model Context Protocol) server that enables creation of Lucid chart process maps using the Lucid REST API. This server is designed to run as a **Stateless Middleware**, where authentication is handled by the MCP Client (e.g., LibreChat) and tokens are passed to the server with each request.
 
 ## Features
 
-- **OAuth2 Authentication**: Secure per-user authentication with Lucid API
-- **Process Map Creation**: Create simple linear process flows with automatic shape placement
-- **Custom Diagrams**: Build complex diagrams with full control over shapes, connectors, and styling
-- **Step-by-Step Builder**: Construct diagrams programmatically with an intuitive API
-- **Standard Import Support**: Full support for Lucid Standard Import JSON format
-- **Multi-Product**: Works with both Lucidchart and Lucidspark
+- **Stateless Architecture**: No local token storage; secure and scalable.
+- **Process Map Creation**: Create simple linear process flows with automatic shape placement.
+- **Custom Diagrams**: Build complex diagrams with full control over shapes, connectors, and styling.
+- **Step-by-Step Builder**: Construct diagrams programmatically with an intuitive API.
+- **Standard Import Support**: Full support for Lucid Standard Import JSON format.
+- **Multi-Product**: Works with both Lucidchart and Lucidspark.
 
 ## Installation
 
@@ -18,73 +18,49 @@ npm install
 npm run build
 ```
 
-## Configuration
+## Running the Server
 
-### Setting up OAuth2 with Lucid
-
-1. Create an OAuth2 client in your Lucid account:
-   - Go to Lucid Developer Portal
-   - Create a new OAuth2 application
-   - Note your `Client ID` and `Client Secret`
-   - Set your redirect URI (e.g., `http://localhost:3000/callback`)
-
-2. Set environment variables:
+The server runs as an Express app with an SSE (Server-Sent Events) endpoint.
 
 ```bash
-export LUCID_CLIENT_ID="your_client_id"
-export LUCID_CLIENT_SECRET="your_client_secret"
-export LUCID_REDIRECT_URI="http://localhost:3000/callback"
-
-# Optional: Set tokens directly if you already have them
-export LUCID_ACCESS_TOKEN="your_access_token"
-export LUCID_REFRESH_TOKEN="your_refresh_token"
+npm start
 ```
 
-### MCP Configuration
+This will start the server on port 3000 (default).
+SSE Endpoint: `http://localhost:3000/sse`
 
-Add to your MCP settings file (e.g., Claude Desktop config):
+## Configuration
 
-```json
-{
-  "mcpServers": {
-    "lucid-import": {
-      "command": "node",
-      "args": ["/path/to/lucid-import2-mcp/build/index.js"],
-      "env": {
-        "LUCID_CLIENT_ID": "your_client_id",
-        "LUCID_CLIENT_SECRET": "your_client_secret",
-        "LUCID_REDIRECT_URI": "http://localhost:3000/callback"
-      }
-    }
-  }
-}
+### MCP Client Configuration (e.g., LibreChat)
+
+Configure your MCP client to use the SSE transport and handle OAuth 2.0.
+
+```yaml
+mcpServers:
+  lucid-chart:
+    type: streamable-http
+    url: "http://localhost:3000/sse"
+    requiresOAuth: true
+    oauth:
+      client_id: "${LUCID_CLIENT_ID}"
+      client_secret: "${LUCID_CLIENT_SECRET}"
+      authorization_url: "https://lucid.app/oauth2/authorize"
+      token_url: "https://lucid.app/oauth2/token"
+      scope: "lucidchart.document.app lucidchart.document.content lucidspark.document.app lucidspark.document.content user.profile"
+      redirect_uri: "https://your-client-url.com/api/mcp/lucid-chart/oauth/callback"
+```
+
+### Environment Variables (Server)
+
+The server itself is stateless and doesn't need the OAuth secrets, but you can configure the port:
+
+```bash
+PORT=3000
 ```
 
 ## Available Tools
 
-### Authentication Tools
-
-#### `lucid_get_auth_url`
-Generate OAuth2 authorization URL for user authentication.
-
-**Parameters:**
-- `state` (optional): State parameter for CSRF protection
-
-**Returns:** Authorization URL that users must visit
-
-#### `lucid_exchange_code`
-Exchange authorization code for access token.
-
-**Parameters:**
-- `code` (required): Authorization code from OAuth callback
-
-**Returns:** Success message with token expiration info
-
-#### `lucid_set_token`
-Manually set an access token.
-
-**Parameters:**
-- `token` (required): Access token to use
+### User Tools
 
 #### `lucid_get_user_profile`
 Get authenticated user's profile information.
@@ -176,67 +152,15 @@ Import a complete diagram JSON into Lucid.
 - `product` (optional): 'lucidchart' or 'lucidspark'
 - `parentFolderId` (optional): Folder ID
 
-#### `lucid_create_custom_diagram`
-Create a custom diagram with full JSON specification.
 
-**Parameters:**
-- `title` (required): Document title
-- `documentJson` (required): Complete document JSON string
-- `product` (optional): 'lucidchart' or 'lucidspark'
-- `parentFolderId` (optional): Folder ID
 
 ## Usage Workflow
 
-### 1. Authentication
-
-First, get the authorization URL:
-```
-Use tool: lucid_get_auth_url
-```
-
-Visit the URL, authorize the application, and get the authorization code.
-
-Exchange the code for a token:
-```
-Use tool: lucid_exchange_code
-Parameters: { "code": "your_authorization_code" }
-```
-
-Alternatively, set a token directly:
-```
-Use tool: lucid_set_token
-Parameters: { "token": "your_access_token" }
-```
-
-### 2. Create Diagrams
-
-Create a simple process map:
-```
-Use tool: lucid_create_process_map
-Parameters: {
-  "title": "My Process",
-  "steps": ["Start", "Step 1", "Step 2", "End"]
-}
-```
-
-Or build a custom diagram:
-```
-Use tool: lucid_build_diagram_step_by_step
-Parameters: {
-  "pageTitle": "Custom Diagram",
-  "shapes": [...],
-  "connectors": [...]
-}
-```
-
-Then import the generated JSON:
-```
-Use tool: lucid_import_diagram
-Parameters: {
-  "title": "My Custom Diagram",
-  "documentJson": "..."
-}
-```
+1.  **Connect**: User clicks "Connect" in the MCP Client (e.g., LibreChat).
+2.  **Authenticate**: User logs in to Lucid via the OAuth popup.
+3.  **Use Tools**: User asks Claude/LLM to create diagrams.
+    - The Client sends the access token in the `Authorization` header.
+    - The Server uses the token to call the Lucid API.
 
 ## Standard Import Format
 
@@ -321,15 +245,6 @@ Per Lucid Standard Import specifications:
 - All items must have unique UUIDs
 - At least one page required
 
-## API Scopes
-
-The server requests these OAuth2 scopes:
-- `lucidchart.document.content` - Create/edit Lucidchart documents
-- `lucidchart.document.app.folder` - Access folders
-- `lucidspark.document.content` - Create/edit Lucidspark boards
-- `lucidspark.document.app.folder` - Access folders
-- `user.profile` - Read user profile
-
 ## Development
 
 ```bash
@@ -339,27 +254,9 @@ npm install
 # Build TypeScript
 npm run build
 
-# Watch mode for development
-npm run watch
+# Start Server
+npm start
 ```
-
-## Troubleshooting
-
-### Authentication Issues
-- Ensure CLIENT_ID and CLIENT_SECRET are correct
-- Check that redirect URI matches your OAuth app configuration
-- Verify that scopes are properly requested
-
-### Import Failures
-- Validate JSON structure matches Standard Import format
-- Check that all UUIDs are unique
-- Ensure file size limits are not exceeded
-- Verify access token is valid and not expired
-
-### API Errors
-- Check that you have proper permissions for the folder
-- Ensure the product type matches your license (lucidchart vs lucidspark)
-- Verify network connectivity to api.lucid.co
 
 ## Resources
 

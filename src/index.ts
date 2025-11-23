@@ -1,77 +1,32 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { LucidOAuthClient } from './oauth.js';
+import express from 'express';
+import cors from 'cors';
+import { AsyncLocalStorage } from 'async_hooks';
 import { LucidApiClient } from './lucid-client.js';
 import { LucidDocumentBuilder, createSimpleProcessMap } from './builder.js';
-import { LucidConfig } from './types.js';
 
-// Configuration from environment variables
-const config: LucidConfig = {
-  clientId: process.env.LUCID_CLIENT_ID || '',
-  clientSecret: process.env.LUCID_CLIENT_SECRET || '',
-  redirectUri: process.env.LUCID_REDIRECT_URI || 'http://localhost:3000/callback',
-  accessToken: process.env.LUCID_ACCESS_TOKEN,
-  refreshToken: process.env.LUCID_REFRESH_TOKEN,
-};
+// AsyncLocalStorage to store the auth token for the current request context
+const authStorage = new AsyncLocalStorage<string>();
 
-const oauthClient = new LucidOAuthClient(config);
-let apiClient: LucidApiClient | null = null;
-
-// Initialize API client if we have a token
-if (config.accessToken) {
-  apiClient = new LucidApiClient(config.accessToken);
+// Helper to get the API client for the current request
+function getApiClient(): LucidApiClient {
+  const token = authStorage.getStore();
+  if (!token) {
+    throw new Error('Authentication required. No access token found in request context.');
+  }
+  return new LucidApiClient(token);
 }
 
 // Define MCP tools
 const tools: Tool[] = [
-  {
-    name: 'lucid_get_auth_url',
-    description: 'Generate OAuth2 authorization URL for user authentication. Users must visit this URL to authorize the application.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        state: {
-          type: 'string',
-          description: 'Optional state parameter for CSRF protection',
-        },
-      },
-    },
-  },
-  {
-    name: 'lucid_exchange_code',
-    description: 'Exchange OAuth2 authorization code for access token after user authorizes the application',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description: 'Authorization code from OAuth callback',
-        },
-      },
-      required: ['code'],
-    },
-  },
-  {
-    name: 'lucid_set_token',
-    description: 'Manually set the access token for API requests',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        token: {
-          type: 'string',
-          description: 'Access token to use for API requests',
-        },
-      },
-      required: ['token'],
-    },
-  },
   {
     name: 'lucid_get_user_profile',
     description: 'Get the authenticated user profile information',
@@ -109,34 +64,7 @@ const tools: Tool[] = [
       required: ['title', 'steps'],
     },
   },
-  {
-    name: 'lucid_create_custom_diagram',
-    description: 'Create a custom diagram using a detailed JSON specification following Lucid Standard Import format',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: {
-          type: 'string',
-          description: 'Title of the diagram document',
-        },
-        documentJson: {
-          type: 'string',
-          description: 'JSON string containing the complete document definition with pages, shapes, and lines',
-        },
-        product: {
-          type: 'string',
-          enum: ['lucidchart', 'lucidspark'],
-          description: 'Product type (lucidchart or lucidspark)',
-          default: 'lucidchart',
-        },
-        parentFolderId: {
-          type: 'number',
-          description: 'Optional folder ID to create document in',
-        },
-      },
-      required: ['title', 'documentJson'],
-    },
-  },
+
   {
     name: 'lucid_build_diagram_step_by_step',
     description: 'Build a diagram step-by-step by adding shapes and connectors. Returns JSON that can be imported.',
@@ -239,51 +167,103 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    switch (name) {
-      case 'lucid_get_auth_url': {
-        const url = oauthClient.getAuthorizationUrl(args?.state as string | undefined);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Please visit this URL to authorize the application:\n\n${url}\n\nAfter authorization, you'll receive a code that you can exchange for an access token using the lucid_exchange_code tool.`,
-            },
-          ],
-        };
+    // For tools that don't need authentication (none in this list currently, but good practice)
+    if (name === 'lucid_build_diagram_step_by_step') {
+      const pageTitle = args?.pageTitle as string;
+      const shapes = args?.shapes as any[];
+      const connectors = (args?.connectors as any[]) || [];
+
+      if (!Array.isArray(shapes)) {
+        throw new Error('Shapes must be an array');
       }
 
-      case 'lucid_exchange_code': {
-        const code = args?.code as string;
-        const tokenResponse = await oauthClient.exchangeCodeForToken(code);
-        apiClient = new LucidApiClient(tokenResponse.access_token);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Successfully authenticated! Access token obtained.\n\nToken expires in: ${tokenResponse.expires_in} seconds\n\nYou can now use other tools to create diagrams.`,
-            },
-          ],
-        };
-      }
-
-      case 'lucid_set_token': {
-        const token = args?.token as string;
-        oauthClient.setAccessToken(token);
-        apiClient = new LucidApiClient(token);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: 'Access token set successfully. You can now use other tools to create diagrams.',
-            },
-          ],
-        };
-      }
-
-      case 'lucid_get_user_profile': {
-        if (!apiClient) {
-          throw new Error('Not authenticated. Please set an access token first.');
+      // Validate shapes structure
+      for (const [index, shape] of shapes.entries()) {
+        if (!shape.type || typeof shape.x !== 'number' || typeof shape.y !== 'number') {
+          throw new Error(`Invalid shape at index ${index}: missing required properties (type, x, y)`);
         }
+      }
+
+      const builder = new LucidDocumentBuilder();
+      builder.addPage(pageTitle);
+
+      const shapeIds: string[] = [];
+
+      // Add all shapes
+      for (const shape of shapes) {
+        let shapeId: string;
+
+        if (shape.type === 'process' || shape.type === 'rectangle') {
+          shapeId = builder.addProcessBox({
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            text: shape.text,
+            fillColor: shape.fillColor,
+            strokeColor: shape.strokeColor,
+          });
+        } else if (shape.type === 'decision' || shape.type === 'diamond') {
+          shapeId = builder.addDecisionDiamond({
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            text: shape.text,
+            fillColor: shape.fillColor,
+            strokeColor: shape.strokeColor,
+          });
+        } else if (shape.type === 'start' || shape.type === 'end' || shape.type === 'ellipse') {
+          shapeId = builder.addStartEnd({
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            text: shape.text,
+            fillColor: shape.fillColor,
+            strokeColor: shape.strokeColor,
+          });
+        } else {
+          shapeId = builder.addShape({
+            shapeType: shape.type,
+            x: shape.x,
+            y: shape.y,
+            width: shape.width || 100,
+            height: shape.height || 60,
+            text: shape.text,
+          });
+        }
+
+        shapeIds.push(shapeId);
+      }
+
+      // Add connectors
+      for (const connector of connectors) {
+        builder.addConnector({
+          fromShapeId: shapeIds[connector.from],
+          toShapeId: shapeIds[connector.to],
+          text: connector.text,
+        });
+      }
+
+      const document = builder.build();
+      const documentJson = JSON.stringify(document, null, 2);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Diagram built successfully!\n\nUse the lucid_import_diagram tool with this JSON to create the document:\n\n${documentJson}`,
+          },
+        ],
+      };
+    }
+
+    // Tools requiring authentication
+    const apiClient = getApiClient();
+
+    switch (name) {
+      case 'lucid_get_user_profile': {
         const profile = await apiClient.getUserProfile();
         return {
           content: [
@@ -296,10 +276,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'lucid_create_process_map': {
-        if (!apiClient) {
-          throw new Error('Not authenticated. Please set an access token first.');
-        }
-
         const title = args?.title as string;
         const steps = args?.steps as string[];
         const product = (args?.product as 'lucidchart' | 'lucidspark') || 'lucidchart';
@@ -323,125 +299,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'lucid_create_custom_diagram': {
-        if (!apiClient) {
-          throw new Error('Not authenticated. Please set an access token first.');
-        }
 
-        const title = args?.title as string;
-        const documentJson = args?.documentJson as string;
-        const product = (args?.product as 'lucidchart' | 'lucidspark') || 'lucidchart';
-        const parentFolderId = args?.parentFolderId as number | undefined;
-
-        const document = JSON.parse(documentJson);
-        const result = await apiClient.importDocument({
-          title,
-          product,
-          document,
-          parentFolderId,
-        });
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Custom diagram created successfully!\n\nDocument ID: ${result.documentId}\nTitle: ${result.title}\nProduct: ${result.product}\n\nEdit URL: ${result.editUrl}`,
-            },
-          ],
-        };
-      }
-
-      case 'lucid_build_diagram_step_by_step': {
-        const pageTitle = args?.pageTitle as string;
-        const shapes = args?.shapes as any[];
-        const connectors = (args?.connectors as any[]) || [];
-
-        const builder = new LucidDocumentBuilder();
-        builder.addPage(pageTitle);
-
-        const shapeIds: string[] = [];
-
-        // Add all shapes
-        for (const shape of shapes) {
-          let shapeId: string;
-
-          if (shape.type === 'process' || shape.type === 'rectangle') {
-            shapeId = builder.addProcessBox({
-              x: shape.x,
-              y: shape.y,
-              width: shape.width,
-              height: shape.height,
-              text: shape.text,
-              fillColor: shape.fillColor,
-              strokeColor: shape.strokeColor,
-            });
-          } else if (shape.type === 'decision' || shape.type === 'diamond') {
-            shapeId = builder.addDecisionDiamond({
-              x: shape.x,
-              y: shape.y,
-              width: shape.width,
-              height: shape.height,
-              text: shape.text,
-              fillColor: shape.fillColor,
-              strokeColor: shape.strokeColor,
-            });
-          } else if (shape.type === 'start' || shape.type === 'end' || shape.type === 'ellipse') {
-            shapeId = builder.addStartEnd({
-              x: shape.x,
-              y: shape.y,
-              width: shape.width,
-              height: shape.height,
-              text: shape.text,
-              fillColor: shape.fillColor,
-              strokeColor: shape.strokeColor,
-            });
-          } else {
-            shapeId = builder.addShape({
-              shapeType: shape.type,
-              x: shape.x,
-              y: shape.y,
-              width: shape.width || 100,
-              height: shape.height || 60,
-              text: shape.text,
-            });
-          }
-
-          shapeIds.push(shapeId);
-        }
-
-        // Add connectors
-        for (const connector of connectors) {
-          builder.addConnector({
-            fromShapeId: shapeIds[connector.from],
-            toShapeId: shapeIds[connector.to],
-            text: connector.text,
-          });
-        }
-
-        const document = builder.build();
-        const documentJson = JSON.stringify(document, null, 2);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Diagram built successfully!\n\nUse the lucid_import_diagram tool with this JSON to create the document:\n\n${documentJson}`,
-            },
-          ],
-        };
-      }
 
       case 'lucid_import_diagram': {
-        if (!apiClient) {
-          throw new Error('Not authenticated. Please set an access token first.');
-        }
-
         const title = args?.title as string;
         const documentJson = args?.documentJson as string;
         const product = (args?.product as 'lucidchart' | 'lucidspark') || 'lucidchart';
         const parentFolderId = args?.parentFolderId as number | undefined;
 
-        const document = JSON.parse(documentJson);
+        let document;
+        try {
+          document = JSON.parse(documentJson);
+        } catch (e) {
+          throw new Error('Invalid documentJson: Failed to parse JSON');
+        }
+
+        if (!document.version || !Array.isArray(document.pages)) {
+          throw new Error('Invalid document structure: Missing version or pages array');
+        }
+
         const result = await apiClient.importDocument({
           title,
           product,
@@ -476,14 +352,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Start the server
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('Lucid Import MCP Server running on stdio');
-}
+// Initialize Express app
+const app = express();
+app.use(cors());
 
-main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
+// Set up SSE transport
+let transport: SSEServerTransport;
+
+app.get('/sse', async (req, res) => {
+  console.log('New SSE connection established');
+  transport = new SSEServerTransport('/messages', res);
+  await server.connect(transport);
+});
+
+app.post('/messages', async (req, res) => {
+  if (!transport) {
+    res.status(400).send('No active SSE connection');
+    return;
+  }
+
+  // Extract Authorization header
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).send('Missing Authorization Token');
+    return;
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  // Run the request handler within the AsyncLocalStorage context
+  await authStorage.run(token, async () => {
+    await transport.handlePostMessage(req, res);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Lucid Import MCP Server running on port ${PORT}`);
+  console.log(`SSE Endpoint: http://localhost:${PORT}/sse`);
 });

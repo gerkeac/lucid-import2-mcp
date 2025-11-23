@@ -76,8 +76,9 @@ export class LucidApiClient {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to import document: ${response.status} ${error}`);
+      const errorBody = await response.text();
+      console.error(`Lucid API Error (Import Document): ${response.status} ${errorBody}`);
+      throw new Error(`Failed to import document: ${response.status}. Please check server logs for details.`);
     }
 
     const result = await response.json();
@@ -117,8 +118,9 @@ export class LucidApiClient {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to create document: ${response.status} ${error}`);
+      const errorBody = await response.text();
+      console.error(`Lucid API Error (Create Document): ${response.status} ${errorBody}`);
+      throw new Error(`Failed to create document: ${response.status}. Please check server logs for details.`);
     }
 
     const result = await response.json();
@@ -142,8 +144,9 @@ export class LucidApiClient {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to get user profile: ${response.status} ${error}`);
+      const errorBody = await response.text();
+      console.error(`Lucid API Error (Get Profile): ${response.status} ${errorBody}`);
+      throw new Error(`Failed to get user profile: ${response.status}. Please check server logs for details.`);
     }
 
     const result = await response.json();
