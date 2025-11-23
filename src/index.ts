@@ -437,17 +437,17 @@ app.post('/sse', async (req, res) => {
     return;
   }
 
-  // Extract Authorization header
+  // Extract Authorization header (optional - some MCP requests don't require auth)
   const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).send('Missing Authorization Token');
-    return;
+  let token: string | undefined;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
   }
 
-  const token = authHeader.split(' ')[1];
-
   // Run the request handler within the AsyncLocalStorage context
-  await authStorage.run(token, async () => {
+  // If no token is present, store undefined (tool handlers will check and error if needed)
+  await authStorage.run(token || '', async () => {
     await transport.handlePostMessage(req, res);
   });
 });
