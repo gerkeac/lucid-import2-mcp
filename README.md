@@ -58,10 +58,13 @@ mcpServers:
       client_id: "${LUCID_CLIENT_ID}"
       client_secret: "${LUCID_CLIENT_SECRET}"
       authorization_url: "https://lucid.app/oauth2/authorize"
-      token_url: "https://api.lucid.co/oauth2/token"
+      token_url: "https://your-mcp-server-url.com/oauth/token"
       scope: "lucidchart.document.app lucidchart.document.content lucidspark.document.app lucidspark.document.content user.profile"
       redirect_uri: "https://your-client-url.com/api/mcp/lucid-chart/oauth/callback"
 ```
+
+**Important:** The `token_url` points to this MCP server's OAuth proxy endpoint (`/oauth/token`), not directly to Lucid's API. The proxy translates the OAuth request format to match Lucid's requirements. Replace `https://your-mcp-server-url.com` with your actual MCP server URL (e.g., `https://lucid-mcp.amendllc.com`).
+
 
 ### Environment Variables (Server)
 
