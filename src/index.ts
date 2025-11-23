@@ -365,13 +365,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Enable JSON and URL-encoded body parsing for OAuth endpoint
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 // OAuth Proxy Endpoint
 // Translates LibreChat's client_secret_basic (header) to Lucid's client_secret_post (body)
-app.post('/oauth/token', async (req, res) => {
+// Body parsing is applied ONLY to this endpoint to avoid consuming the SSE stream
+app.post('/oauth/token',
+  express.json(),
+  express.urlencoded({ extended: true }),
+  async (req, res) => {
     try {
       // Extract Authorization header
       const authHeader = req.headers['authorization'];
@@ -442,6 +442,9 @@ app.get('/sse', async (req, res) => {
 
 app.post('/sse', async (req, res) => {
   console.log('[SSE] POST /sse received');
+  console.log('[SSE] Transport exists:', !!transport);
+  console.log('[SSE] Request body available:', !!req.body);
+  console.log('[SSE] Request body:', req.body);
 
   if (!transport) {
     console.error('[SSE] No active transport - rejecting request');
@@ -462,11 +465,16 @@ app.post('/sse', async (req, res) => {
 
   // Run the request handler within the AsyncLocalStorage context
   // If no token is present, store undefined (tool handlers will check and error if needed)
-  await authStorage.run(token || '', async () => {
-    console.log('[SSE] Handling POST message...');
-    await transport.handlePostMessage(req, res);
-    console.log('[SSE] POST message handled');
-  });
+  try {
+    await authStorage.run(token || '', async () => {
+      console.log('[SSE] Handling POST message...');
+      await transport.handlePostMessage(req, res);
+      console.log('[SSE] POST message handled successfully');
+    });
+  } catch (error) {
+    console.error('[SSE] Error handling POST message:', error);
+    throw error;
+  }
 });
 
 const PORT = process.env.PORT || 3000;
