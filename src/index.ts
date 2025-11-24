@@ -367,6 +367,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Lucid Import MCP Server is running',
+    version: '1.0.0'
+  });
+});
+
+// Head request for connectivity checks
+app.head('/', (req, res) => {
+  res.status(200).end();
+});
+
 // OAuth Proxy Endpoint
 // Translates LibreChat's client_secret_basic (header) to Lucid's client_secret_post (body)
 // Body parsing is applied ONLY to this endpoint to avoid consuming the SSE stream
@@ -436,8 +450,11 @@ app.post('/oauth/token',
 let transport: SSEServerTransport | null = null;
 let pendingResponses: any[] = [];
 
-app.get('/sse', async (req, res) => {
+// Also handle /sse/:sessionId pattern that some clients might use
+app.get('/sse/:sessionId?', async (req, res) => {
   console.log('[SSE] GET /sse - Establishing SSE connection');
+  console.log('[SSE] Session ID param:', req.params.sessionId);
+  console.log('[SSE] Full URL:', req.url);
 
   // Create transport with this response stream
   transport = new SSEServerTransport('/sse', res);
