@@ -451,7 +451,7 @@ let transport: SSEServerTransport | null = null;
 let pendingResponses: any[] = [];
 
 // Also handle /sse/:sessionId pattern that some clients might use
-app.get('/sse/:sessionId?', async (req, res) => {
+app.get(['/sse', '/sse/:sessionId'], async (req, res) => {
   console.log('[SSE] GET /sse - Establishing SSE connection');
   console.log('[SSE] Session ID param:', req.params.sessionId);
   console.log('[SSE] Full URL:', req.url);
